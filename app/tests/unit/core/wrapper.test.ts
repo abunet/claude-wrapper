@@ -1,4 +1,4 @@
-import { CoreWrapper } from '../../../src/core/wrapper';
+import { CoreWrapper, FORMAT_REMINDER } from '../../../src/core/wrapper';
 import { OpenAIRequest } from '../../../src/types';
 import { ClaudeClientMock } from '../../mocks/core/claude-client-mock';
 import { ValidatorMock } from '../../mocks/core/validator-mock';
@@ -309,6 +309,22 @@ describe('CoreWrapper', () => {
           ])
         })
       );
+    });
+
+    it('recalls the format after the conversation, as the last message', async () => {
+      const request: OpenAIRequest = {
+        model: 'sonnet',
+        messages: [{ role: 'user', content: 'Use this tool' }],
+        tools: [{ type: 'function', function: { name: 'test_tool' } }]
+      };
+
+      ClaudeClientMock.setDefaultResponse('Tool response');
+      ValidatorMock.setValidationAsValid(false);
+
+      await wrapper.handleChatCompletion(request);
+
+      const sent = mockClaudeClient.execute.mock.calls[0]?.[0];
+      expect(sent?.messages.at(-1)).toEqual({ role: 'system', content: FORMAT_REMINDER });
     });
 
     it('should add format instructions for multi-turn conversations', async () => {
