@@ -309,7 +309,14 @@ export class CoreWrapper implements ICoreWrapper {
       content: this.createFormatTemplate(requestId, timestamp, request.model) + toolChoiceInstruction(request)
     };
 
-    const enhancedMessages = [formatInstruction, ...request.messages];
+    // The format is recalled after the conversation too: in a long one the model, reading its earlier answers as
+    // plain text, tends to answer in plain text or inside a code block.
+    const formatReminder: OpenAIMessage = {
+      role: TEMPLATE_CONSTANTS.FORMAT_INSTRUCTION_ROLE,
+      content: FORMAT_REMINDER
+    };
+
+    const enhancedMessages = [formatInstruction, ...request.messages, formatReminder];
 
     logger.debug('Added format instructions for complex request', {
       originalMessageCount: request.messages.length,
@@ -381,7 +388,7 @@ export class CoreWrapper implements ICoreWrapper {
     attempt: number = 1
   ): Promise<OpenAIResponse> {
     
-    response = withoutFences(response);
+    response = envelopeOf(response);
     const validation = this.validator.validate(response);
 
     if (validation.valid) {
@@ -451,9 +458,25 @@ function toolChoiceInstruction(request: OpenAIRequest): string {
 }
 
 // A JSON answer the model wrapped in a markdown code fence.
-function withoutFences(response: string): string {
-  const fenced = /^\s*```(?:json)?\s*([\s\S]*?)\s*```\s*$/.exec(response);
-  return fenced?.[1] ?? response;
+// The last words of the prompt, after the conversation.
+export const FORMAT_REMINDER =
+  'Reminder: answer with the JSON object described at the start and nothing else: begin with { and end with }, ' +
+  'no code block and no text around it; for tools fill tool_calls and set content to null.';
+
+// What may stand around the JSON answer without being part of it: blanks and the marks of a code block, opened,
+// closed or both. Any other text means the answer is not the JSON envelope and is passed on as text.
+const BEFORE_ENVELOPE = /^\s*(?:```(?:json)?)?\s*$/;
+const AFTER_ENVELOPE = /^\s*(?:```)?\s*$/;
+
+// The JSON envelope of an answer, from its first "{" to its last "}", when only blanks and code block marks stand
+// around it; otherwise the answer as it is. The validator then decides whether it is a chat completion.
+export function envelopeOf(response: string): string {
+  const first = response.indexOf('{');
+  const last = response.lastIndexOf('}');
+  if (first < 0 || last < first) return response;
+  const before = response.slice(0, first);
+  const after = response.slice(last + 1);
+  return BEFORE_ENVELOPE.test(before) && AFTER_ENVELOPE.test(after) ? response.slice(first, last + 1) : response;
 }
 
 // The OpenAI shape of an answer with tool calls: finish_reason "tool_calls", content null, arguments as a JSON
